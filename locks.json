@@ -6,6 +6,13 @@
         "test_S1_C1_counts_the_words_in_a_file",
         "test_S1_C2_a_missing_file_says_so"
       ]
+    },
+    "tests/acceptance/S2/test_S2_count_lines.py": {
+      "sha256": "8678b802d614e5985ef39a0e449ca017f72acccfdf0d69a875821e7140d3159a",
+      "tests": [
+        "test_S2_C1_shows_the_number_of_lines_in_a_file",
+        "test_S2_C2_an_empty_file_shows_zero_lines"
+      ]
     }
   }
 }
