@@ -20,7 +20,7 @@ def main(argv=None):
     try:
         n = count_words(args.file)
     except FileNotFoundError:
-        print(f"no such file: {args.file}", file=sys.stderr)
+        print(f"cannot open {args.file}", file=sys.stderr)
         return 2
     print(f"words: {n}")
     return 0
