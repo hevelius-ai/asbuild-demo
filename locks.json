@@ -1,0 +1,11 @@
+{
+  "files": {
+    "tests/acceptance/S1/test_S1_count.py": {
+      "sha256": "7c4b023a5c5d4f69d7b0edfb9116f695f369ba07be925cb8963f1037335eeef1",
+      "tests": [
+        "test_S1_C1_counts_the_words_in_a_file",
+        "test_S1_C2_a_missing_file_says_so"
+      ]
+    }
+  }
+}
