@@ -1,0 +1,10 @@
+[project]
+name = "asbuild-demo"
+version = "0.1.0"
+description = "A small command-line app whose pull requests show AsBuild's four verdicts."
+requires-python = ">=3.12"
+license = "MIT"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+junit_family = "xunit2"
