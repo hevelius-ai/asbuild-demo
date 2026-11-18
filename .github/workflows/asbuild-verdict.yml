@@ -1,7 +1,8 @@
 # AsBuild, the TRUSTED half. Copy this file to .github/workflows/ in your repository.
 # It runs from your main branch when asbuild-test finishes. It never checks out or runs pull-request code:
 # it reads the test results as data, takes the commit from the workflow_run event, fetches AsBuild's code from
-# hevelius-ai/asbuild, and posts one check run named "AsBuild" and one receipt on the pull request.
+# hevelius-ai/asbuild, posts one check run named "AsBuild" and one receipt on the pull request, and saves the
+# verdict as a file attached to this run for /asbuild:verdict.
 # AsBuild uses no repository secrets.
 
 name: asbuild-verdict
@@ -75,9 +76,14 @@ jobs:
       - name: Fetch AsBuild (from hevelius-ai/asbuild, never from this repository)
         if: steps.pr.outputs.number != '' && steps.pr.outputs.other_main == ''
         run: |
-          git clone --quiet --depth 1 --branch v0.3.1 https://github.com/hevelius-ai/asbuild "$RUNNER_TEMP/asbuild"
-          echo "ASBUILD=$RUNNER_TEMP/asbuild" >> "$GITHUB_ENV"
-          python -m pip install --quiet defusedxml==0.7.1
+          # Stop unless the engine folder is exactly the one this release was built from (its Git tree id).
+          git clone --quiet --depth 1 --branch v0.4.0 https://github.com/hevelius-ai/asbuild "$RUNNER_TEMP/asbuild"
+          test "$(git -C "$RUNNER_TEMP/asbuild" rev-parse HEAD:engine)" = "191949fef20a57466addbd644634fda0323827f1"
+          # Run only the checked folder, copied alone, so nothing else in the download can be imported.
+          mkdir "$RUNNER_TEMP/asbuild-run"
+          cp -R "$RUNNER_TEMP/asbuild/engine" "$RUNNER_TEMP/asbuild-run/engine"
+          echo "ASBUILD=$RUNNER_TEMP/asbuild-run" >> "$GITHUB_ENV"
+          python -m pip install --quiet --require-hashes --only-binary=:all: --no-deps -r "$RUNNER_TEMP/asbuild-run/engine/requirements.txt"
 
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         if: steps.pr.outputs.number != '' && steps.pr.outputs.other_main == ''
@@ -97,38 +103,14 @@ jobs:
             --pr "${{ steps.pr.outputs.number }}" --main . \
             --out out/verdict.json --summary out/summary.md --receipt "$RECEIPT"
 
-      - name: Post the check run
-        if: always() && steps.pr.outputs.skip != 'true'
-        env:
-          OTHER_MAIN: ${{ steps.pr.outputs.other_main }}
-        run: |
-          mkdir -p out
-          if [ ! -s out/verdict.json ]; then
-            echo '{"verdict": "UNRESOLVED"}' > out/verdict.json
-            echo "AsBuild could not compute the verdict. Nothing is claimed. Verdict run: $RUN_URL" > out/summary.md
-            if [ -n "$OTHER_MAIN" ]; then
-              echo "AsBuild judges pull requests into main, but this repository's default branch is $OTHER_MAIN." \
-                "To fix it: make main the default branch (Settings, General, Default branch), then push again." \
-                >> out/summary.md
-            fi
-          fi
-          verdict=$(jq -r .verdict out/verdict.json)
-          case "$verdict" in
-            PROVEN) c=success ;;
-            "WAITING FOR YOU") c=action_required ;;
-            *) c=failure ;;
-          esac
-          jq -n --arg sha "$HEAD_SHA" --arg c "$c" --arg url "$RUN_URL" --arg title "AsBuild: $verdict" \
-                --rawfile summary out/summary.md \
-            '{name: "AsBuild", head_sha: $sha, status: "completed", conclusion: $c, details_url: $url,
-              output: {title: $title, summary: $summary}}' \
-            | gh api -X POST "repos/$REPO/check-runs" --input - > /dev/null
-
+      # The note is posted first, so it already shows this commit's verdict when the check run completes and when
+      # /asbuild:verdict reads the saved verdict (K4).
       - name: Post the receipt (one comment, edited in place)
         if: always() && steps.pr.outputs.number != ''
         env:
           OTHER_MAIN: ${{ steps.pr.outputs.other_main }}
         run: |
+          mkdir -p out
           n="${{ steps.pr.outputs.number }}"
           top="Stop. Don't accept it. AsBuild couldn't finish its check, so nothing was checked."
           tech="AsBuild: UNRESOLVED. Verdict run: $RUN_URL"
@@ -148,3 +130,44 @@ jobs:
           else
             gh api -X POST "repos/$REPO/issues/$n/comments" -F body=@out/receipt.md > /dev/null
           fi
+
+      - name: Post the check run
+        if: always() && steps.pr.outputs.skip != 'true'
+        env:
+          OTHER_MAIN: ${{ steps.pr.outputs.other_main }}
+        run: |
+          mkdir -p out
+          if [ ! -s out/verdict.json ]; then
+            jq -n --arg sha "$HEAD_SHA" '{verdict: "UNRESOLVED", head_sha: $sha}' > out/verdict.json
+            echo "AsBuild could not compute the verdict. Nothing is claimed. Verdict run: $RUN_URL" > out/summary.md
+            if [ -n "$OTHER_MAIN" ]; then
+              echo "AsBuild judges pull requests into main, but this repository's default branch is $OTHER_MAIN." \
+                "To fix it: make main the default branch (Settings, General, Default branch), then push again." \
+                >> out/summary.md
+            fi
+          fi
+          verdict=$(jq -r .verdict out/verdict.json)
+          case "$verdict" in
+            PROVEN) c=success ;;
+            "WAITING FOR YOU") c=action_required ;;
+            *) c=failure ;;
+          esac
+          jq -n --arg sha "$HEAD_SHA" --arg c "$c" --arg url "$RUN_URL" --arg title "AsBuild: $verdict" \
+                --rawfile summary out/summary.md \
+            '{name: "AsBuild", head_sha: $sha, status: "completed", conclusion: $c, details_url: $url,
+              output: {title: $title, summary: $summary}}' \
+            | gh api -X POST "repos/$REPO/check-runs" --input - > /dev/null
+
+      # /asbuild:verdict reads the verdict only from this file, and only from a run of this workflow started by
+      # workflow_run, which GitHub runs from the default branch's copy alone: a check run or file posted by a
+      # workflow a pull request adds is never read (D50).
+      - name: Save the verdict for /asbuild:verdict
+        if: always() && steps.pr.outputs.skip != 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: asbuild-verdict-${{ github.event.workflow_run.head_sha }}
+          path: |
+            out/verdict.json
+            out/summary.md
+          retention-days: 30
+          overwrite: true
